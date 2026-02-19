@@ -1,269 +1,90 @@
-/**
- * Isai — App JavaScript
- * Handles UI interactions, API calls, and dynamic rendering.
- */
+const IVS = {
+    major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10], dorian: [0, 2, 3, 5, 7, 9, 10],
+    mixolydian: [0, 2, 4, 5, 7, 9, 10], lydian: [0, 2, 4, 6, 7, 9, 11], phrygian: [0, 1, 3, 5, 7, 8, 10],
+    pentatonic_major: [0, 2, 4, 7, 9], pentatonic_minor: [0, 3, 5, 7, 10], blues: [0, 3, 5, 6, 7, 10],
+    harmonic_minor: [0, 2, 3, 5, 7, 8, 11], whole_tone: [0, 2, 4, 6, 8, 10]
+};
+const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'], BLACKS = new Set([1, 3, 6, 8, 10]);
+const $ = id => document.getElementById(id);
+const rSel = $('root-select'), sSel = $('scale-select'), compS = $('complexity-slider'), compV = $('complexity-value');
+const tempS = $('tempo-slider'), tempV = $('tempo-value'), barsS = $('bars-slider'), barsV = $('bars-value');
+const seedI = $('seed-input'), btnG = $('generate-btn'), rCard = $('result-card'), rMeta = $('result-meta');
+const sBars = $('section-bars'), rStats = $('result-stats'), btnD = $('download-btn'), hList = $('history-list');
+const mxViz = $('markov-viz'), mxCon = $('matrix-container'), trList = $('trace-list'), pStrip = $('piano-strip');
 
-// ── Scale Data (matches backend) ──
-const SCALE_INTERVALS = {
-    major: [0, 2, 4, 5, 7, 9, 11],
-    minor: [0, 2, 3, 5, 7, 8, 10],
-    dorian: [0, 2, 3, 5, 7, 9, 10],
-    mixolydian: [0, 2, 4, 5, 7, 9, 10],
-    lydian: [0, 2, 4, 6, 7, 9, 11],
-    phrygian: [0, 1, 3, 5, 7, 8, 10],
-    pentatonic_major: [0, 2, 4, 7, 9],
-    pentatonic_minor: [0, 3, 5, 7, 10],
-    blues: [0, 3, 5, 6, 7, 10],
-    harmonic_minor: [0, 2, 3, 5, 7, 8, 11],
-    whole_tone: [0, 2, 4, 6, 8, 10],
+let mood = 'happy', fname = null, history = [];
+
+function renderP() {
+    const r = rSel.value, ri = NOTES.indexOf(r), ivs = IVS[sSel.value], sn = new Set(ivs.map(i => (ri + i) % 12));
+    pStrip.innerHTML = '';
+    for (let i = 0; i < 12; i++) {
+        let k = document.createElement('div'); k.className = 'piano-key ' + (BLACKS.has(i) ? 'black' : 'white');
+        if (i === ri) k.classList.add('root-note'); else if (sn.has(i)) k.classList.add('in-scale');
+        pStrip.appendChild(k);
+    }
+}
+
+function setM(m) {
+    mood = m; document.querySelectorAll('.mood-btn').forEach(b => b.classList.toggle('active', b.dataset.mood === m));
+    fetch('/api/suggest-tempo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mood: m }) })
+        .then(r => r.json()).then(d => { tempS.value = d.tempo; tempV.textContent = d.tempo; });
+}
+
+compS.oninput = () => compV.textContent = compS.value;
+tempS.oninput = () => tempV.textContent = tempS.value;
+barsS.oninput = () => barsV.textContent = barsS.value;
+$('randomize-seed').onclick = () => seedI.value = Math.floor(Math.random() * 2147483647);
+document.querySelectorAll('.mood-btn').forEach(b => b.onclick = () => setM(b.dataset.mood));
+rSel.onchange = sSel.onchange = renderP;
+
+btnG.onclick = async () => {
+    btnG.classList.add('loading'); btnG.textContent = 'Generating...';
+    let p = { root: rSel.value, scale: sSel.value, mood, complexity: parseInt(compS.value), tempo: parseInt(tempS.value), bars: parseInt(barsS.value) };
+    if (seedI.value) p.seed = parseInt(seedI.value);
+    try {
+        let r = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        if (!r.ok) throw new Error('Failed');
+        let d = await r.json(); showR(d, p);
+        // fetch transition matrix for viz
+        let mr = await fetch('/api/matrix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        let md = await mr.json(); showMatrix(md.matrix, md.labels, d.trace);
+    } catch (e) { alert(e.message) } finally { btnG.classList.remove('loading'); btnG.textContent = 'Generate MIDI'; }
 };
 
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-const BLACK_KEYS = new Set([1, 3, 6, 8, 10]); // semitone indices of black keys
+function showR(d, c) {
+    rCard.classList.remove('hidden'); fname = d.filename;
+    rMeta.innerHTML = [`Key: ${c.root}`, `Scale: ${c.scale}`, `Mood: ${c.mood}`, `BPM: ${d.tempo}`, `Seed: ${d.seed}`].map(t => `<span class="meta-tag">${t}</span>`).join('');
+    let tb = d.sections.reduce((s, x) => s + x.bars, 0);
+    sBars.innerHTML = d.sections.map(x => `<div class="section-block" style="flex:${x.bars}">${x.name} (${x.bars})</div>`).join('');
+    rStats.innerHTML = Object.entries(d.stats).map(([k, v]) => `<span>${k}: <b>${v}</b></span>`).join('');
+    history.unshift({ f: d.filename, l: `${c.root} ${c.scale} ${c.mood}`, t: d.tempo });
+    if (history.length > 10) history.pop(); renderH();
+    rCard.scrollIntoView({ behavior: 'smooth' });
+}
 
-// ── DOM Elements ──
-const rootSelect = document.getElementById('root-select');
-const scaleSelect = document.getElementById('scale-select');
-const moodGrid = document.getElementById('mood-grid');
-const complexitySlider = document.getElementById('complexity-slider');
-const complexityValue = document.getElementById('complexity-value');
-const tempoSlider = document.getElementById('tempo-slider');
-const tempoValue = document.getElementById('tempo-value');
-const barsSlider = document.getElementById('bars-slider');
-const barsValue = document.getElementById('bars-value');
-const seedInput = document.getElementById('seed-input');
-const randomizeSeed = document.getElementById('randomize-seed');
-const generateBtn = document.getElementById('generate-btn');
-const pianoStrip = document.getElementById('piano-strip');
-const emptyState = document.getElementById('empty-state');
-const resultCard = document.getElementById('result-card');
-const resultTitle = document.getElementById('result-title');
-const resultMeta = document.getElementById('result-meta');
-const sectionBars = document.getElementById('section-bars');
-const resultStats = document.getElementById('result-stats');
-const downloadBtn = document.getElementById('download-btn');
-const historyList = document.getElementById('history-list');
+function renderH() {
+    hList.innerHTML = history.length ? history.map(x => `<div class="history-item"><span>${x.l} (${x.t} BPM)</span><a href="/api/download/${x.f}">⬇</a></div>`).join('') : '<p style="color:#999;font-size:0.8rem">No generations yet.</p>';
+}
 
-let currentMood = 'happy';
-let currentFilename = null;
-let history = [];
-
-// ── Piano Strip Rendering ──
-function renderPianoStrip() {
-    const root = rootSelect.value;
-    const scale = scaleSelect.value;
-    const rootIdx = NOTE_NAMES.indexOf(root);
-    const intervals = SCALE_INTERVALS[scale];
-
-    // Compute scale notes as semitone offsets from C
-    const scaleNotes = new Set(intervals.map(i => (rootIdx + i) % 12));
-
-    pianoStrip.innerHTML = '';
-
-    for (let i = 0; i < 12; i++) {
-        const key = document.createElement('div');
-        key.className = 'piano-key';
-
-        if (BLACK_KEYS.has(i)) {
-            key.classList.add('black');
-        } else {
-            key.classList.add('white');
+function showMatrix(mx, labels, trace) {
+    mxViz.classList.remove('hidden');
+    if (!mx.length) { mxCon.innerHTML = '<p>No data</p>'; return; }
+    // build table
+    let h = '<table class="mx-grid"><tr><th></th>' + labels.map(l => `<th>${l}</th>`).join('') + '</tr>';
+    for (let i = 0; i < mx.length; i++) {
+        h += '<tr><th>' + labels[i] + '</th>';
+        for (let j = 0; j < mx[i].length; j++) {
+            let v = mx[i][j], bg = `rgba(0,0,0,${Math.min(v * 3, 0.9).toFixed(2)})`, fg = v * 3 > 0.5 ? '#fff' : '#000';
+            h += `<td style="background:${bg};color:${fg}">${v.toFixed(2)}</td>`;
         }
-
-        if (i === rootIdx) {
-            key.classList.add('root-note');
-        } else if (scaleNotes.has(i)) {
-            key.classList.add('in-scale');
-        }
-
-        key.title = NOTE_NAMES[i];
-        pianoStrip.appendChild(key);
+        h += '</tr>';
     }
+    h += '</table>';
+    mxCon.innerHTML = h;
+    // trace
+    if (!trace || !trace.length) { trList.innerHTML = '<p>No trace data</p>'; return; }
+    trList.innerHTML = trace.map((t, i) => `<div class="trace-step"><span>#${i + 1}</span> <span class="from">${NOTES[t.from_note % 12]}${Math.floor(t.from_note / 12) - 1}</span> <span class="arrow">→</span> <span class="to">${NOTES[t.to_note % 12]}${Math.floor(t.to_note / 12) - 1}</span> <span class="prob">(p=${t.prob})</span></div>`).join('');
 }
 
-// ── Mood Selection ──
-function setMood(mood) {
-    currentMood = mood;
-    document.querySelectorAll('.mood-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.mood === mood);
-    });
-    // Auto-suggest tempo
-    fetchSuggestedTempo(mood);
-}
-
-async function fetchSuggestedTempo(mood) {
-    try {
-        const res = await fetch('/api/suggest-tempo', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mood }),
-        });
-        const data = await res.json();
-        tempoSlider.value = data.tempo;
-        tempoValue.textContent = data.tempo;
-    } catch (e) {
-        console.warn('Failed to fetch suggested tempo:', e);
-    }
-}
-
-// ── Slider Updates ──
-complexitySlider.addEventListener('input', () => {
-    complexityValue.textContent = complexitySlider.value;
-});
-
-tempoSlider.addEventListener('input', () => {
-    tempoValue.textContent = tempoSlider.value;
-});
-
-barsSlider.addEventListener('input', () => {
-    barsValue.textContent = barsSlider.value;
-});
-
-// ── Seed Randomize ──
-randomizeSeed.addEventListener('click', () => {
-    seedInput.value = Math.floor(Math.random() * 2147483647);
-});
-
-// ── Mood Button Events ──
-document.querySelectorAll('.mood-btn').forEach(btn => {
-    btn.addEventListener('click', () => setMood(btn.dataset.mood));
-});
-
-// ── Scale & Root Change ──
-rootSelect.addEventListener('change', renderPianoStrip);
-scaleSelect.addEventListener('change', renderPianoStrip);
-
-// ── Generate ──
-generateBtn.addEventListener('click', generateMidi);
-
-async function generateMidi() {
-    generateBtn.classList.add('loading');
-
-    const payload = {
-        root: rootSelect.value,
-        scale: scaleSelect.value,
-        mood: currentMood,
-        complexity: parseInt(complexitySlider.value),
-        tempo: parseInt(tempoSlider.value),
-        bars: parseInt(barsSlider.value),
-    };
-
-    if (seedInput.value) {
-        payload.seed = parseInt(seedInput.value);
-    }
-
-    try {
-        const res = await fetch('/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Generation failed');
-        }
-
-        const data = await res.json();
-        showResult(data, payload);
-    } catch (e) {
-        console.error('Generation error:', e);
-        alert('Generation failed: ' + e.message);
-    } finally {
-        generateBtn.classList.remove('loading');
-    }
-}
-
-// ── Show Result ──
-function showResult(data, config) {
-    emptyState.classList.add('hidden');
-    resultCard.classList.remove('hidden');
-
-    currentFilename = data.filename;
-
-    // Title
-    const scaleLabel = config.scale.replace(/_/g, ' ');
-    resultTitle.textContent = `${config.root} ${scaleLabel} — ${config.mood}`;
-
-    // Meta tags
-    resultMeta.innerHTML = `
-        <span class="meta-tag"><span class="tag-label">Key</span> ${config.root}</span>
-        <span class="meta-tag"><span class="tag-label">Scale</span> ${scaleLabel}</span>
-        <span class="meta-tag"><span class="tag-label">Mood</span> ${config.mood}</span>
-        <span class="meta-tag"><span class="tag-label">BPM</span> ${data.tempo}</span>
-        <span class="meta-tag"><span class="tag-label">Complexity</span> ${config.complexity}</span>
-        <span class="meta-tag"><span class="tag-label">Seed</span> ${data.seed}</span>
-    `;
-
-    // Section bars
-    const totalBars = data.sections.reduce((s, sec) => s + sec.bars, 0);
-    sectionBars.innerHTML = data.sections.map(sec => {
-        const widthPct = (sec.bars / totalBars * 100).toFixed(1);
-        return `<div class="section-block ${sec.name}" style="flex: ${sec.bars}" title="${sec.name} (${sec.bars} bars)">${sec.name}</div>`;
-    }).join('');
-
-    // Stats
-    resultStats.innerHTML = `
-        <div class="stat-item">
-            <div class="stat-value">${data.stats.melody_notes}</div>
-            <div class="stat-label">Melody Notes</div>
-        </div>
-        <div class="stat-item">
-            <div class="stat-value">${data.stats.chord_events}</div>
-            <div class="stat-label">Chord Events</div>
-        </div>
-        <div class="stat-item">
-            <div class="stat-value">${data.stats.bass_events}</div>
-            <div class="stat-label">Bass Events</div>
-        </div>
-    `;
-
-    // Add to history
-    addToHistory(data, config);
-
-    // Scroll result into view
-    resultCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-// ── Download ──
-downloadBtn.addEventListener('click', () => {
-    if (currentFilename) {
-        window.location.href = `/api/download/${currentFilename}`;
-    }
-});
-
-// ── History ──
-function addToHistory(data, config) {
-    const entry = {
-        filename: data.filename,
-        label: `${config.root} ${config.scale.replace(/_/g, ' ')} — ${config.mood} (c${config.complexity})`,
-        tempo: data.tempo,
-    };
-
-    history.unshift(entry);
-    if (history.length > 10) history.pop();
-    renderHistory();
-}
-
-function renderHistory() {
-    if (history.length === 0) {
-        historyList.innerHTML = '<p style="color: var(--text-muted); font-size: 0.8rem;">No generations yet.</p>';
-        return;
-    }
-
-    historyList.innerHTML = history.map(entry => `
-        <div class="history-item">
-            <div class="history-item-info">
-                <span>🎵</span>
-                <span>${entry.label}</span>
-                <span style="color: var(--text-muted);">${entry.tempo} BPM</span>
-            </div>
-            <a class="download-link" href="/api/download/${entry.filename}" title="Download">⬇️</a>
-        </div>
-    `).join('');
-}
-
-// ── Init ──
-renderPianoStrip();
-renderHistory();
-fetchSuggestedTempo(currentMood);
+btnD.onclick = () => fname && (location.href = `/api/download/${fname}`);
+renderP(); renderH(); setM(mood);

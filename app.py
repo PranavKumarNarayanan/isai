@@ -1,113 +1,57 @@
-"""
-Flask web server for Isai — Procedural MIDI Generator.
-Serves the web UI and handles generation API requests.
-"""
-import os
-import io
-import time
-import random
+# Flask app for Isai MIDI Generator.
+import os, time, random
 from flask import Flask, render_template, request, jsonify, send_file
-
-from core.scales import NOTE_NAMES, SCALE_INTERVALS
-from engine.mood import MOOD_PROFILES, suggest_tempo
+from core.scales import NOTES, INTERVALS
+from engine.mood import MOODS, get_tempo
 from engine.arrangement import arrange
-from midi_export import arrangement_to_midi
+from engine.melody import gen_mel, get_matrix_data
+from midi_export import arr_to_midi
 
 app = Flask(__name__)
-
-# Directory for temporary MIDI files
-TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_midi')
-os.makedirs(TEMP_DIR, exist_ok=True)
-
+TDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_midi')
+os.makedirs(TDIR, exist_ok=True)
 
 @app.route('/')
 def index():
-    """Serve the main UI page."""
-    return render_template('index.html',
-                           notes=NOTE_NAMES,
-                           scales=list(SCALE_INTERVALS.keys()),
-                           moods=list(MOOD_PROFILES.keys()))
-
+    return render_template('index.html', notes=NOTES, scales=list(INTERVALS.keys()), moods=list(MOODS.keys()))
 
 @app.route('/api/suggest-tempo', methods=['POST'])
-def api_suggest_tempo():
-    """Return suggested tempo for a mood."""
-    data = request.json or {}
-    mood = data.get('mood', 'happy')
-    return jsonify({'tempo': suggest_tempo(mood)})
+def suggest():
+    d = request.json or {}
+    return jsonify({'tempo': get_tempo(d.get('mood', 'happy'))})
 
+@app.route('/api/matrix', methods=['POST'])
+def matrix():
+    d = request.json or {}
+    mx, labels = get_matrix_data(d.get('root','C'), d.get('scale','major'), d.get('mood','happy'))
+    return jsonify({'matrix': mx, 'labels': labels})
 
 @app.route('/api/generate', methods=['POST'])
-def api_generate():
-    """Generate a MIDI file and return it for download."""
-    data = request.json or {}
-
-    root = data.get('root', 'C')
-    scale_type = data.get('scale', 'major')
-    mood = data.get('mood', 'happy')
-    complexity = int(data.get('complexity', 3))
-    tempo = data.get('tempo')
-    bars = int(data.get('bars', 16))
-    seed = data.get('seed')
-
-    if tempo is not None:
-        tempo = int(tempo)
-    if seed is not None:
-        seed = int(seed)
-    else:
-        seed = int(time.time() * 1000) % (2**31)
-
-    # Validate inputs
-    if root not in NOTE_NAMES:
-        return jsonify({'error': f'Invalid root note: {root}'}), 400
-    if scale_type not in SCALE_INTERVALS:
-        return jsonify({'error': f'Invalid scale: {scale_type}'}), 400
-    if mood not in MOOD_PROFILES:
-        return jsonify({'error': f'Invalid mood: {mood}'}), 400
-
-    complexity = max(1, min(5, complexity))
-    bars = max(4, min(64, bars))
-
-    # Generate
-    arrangement = arrange(
-        root=root,
-        scale_type=scale_type,
-        mood=mood,
-        complexity=complexity,
-        total_bars=bars,
-        tempo=tempo,
-        seed=seed,
-    )
-
-    # Export to MIDI
-    filename = f"{root}_{scale_type}_{mood}_c{complexity}_{seed}.mid"
-    filepath = os.path.join(TEMP_DIR, filename)
-    arrangement_to_midi(arrangement, filepath)
-
-    # Return file info
+def gen():
+    d = request.json or {}
+    r, st, m = d.get('root','C'), d.get('scale','major'), d.get('mood','happy')
+    comp, t, bars, s = int(d.get('complexity',3)), d.get('tempo'), int(d.get('bars',16)), d.get('seed')
+    if s is None: s = int(time.time() * 1000) % (2**31)
+    if r not in NOTES or st not in INTERVALS or m not in MOODS:
+        return jsonify({'error': 'Invalid params'}), 400
+    arr = arrange(r, st, m, max(1,min(5,comp)), max(4,min(64,bars)), int(t) if t else None, int(s))
+    # also get a trace from a single melody call for visualization
+    _, trace = gen_mel(r, st, m, comp, min(bars, 8), s)
+    fname = f"{r}_{st}_{m}_c{comp}_{s}.mid"
+    path = os.path.join(TDIR, fname)
+    arr_to_midi(arr, path)
     return jsonify({
-        'filename': filename,
-        'tempo': arrangement['tempo'],
-        'sections': [{'name': s[0], 'bars': s[1]} for s in arrangement['sections']],
-        'stats': {
-            'melody_notes': len(arrangement['tracks']['melody']),
-            'chord_events': len(arrangement['tracks']['chords']),
-            'bass_events': len(arrangement['tracks']['bass']),
-        },
-        'seed': seed,
+        'filename': fname, 'tempo': arr['tempo'],
+        'sections': [{'name': x[0], 'bars': x[1]} for x in arr['sections']],
+        'stats': {k: len(v) for k, v in arr['tracks'].items()},
+        'trace': trace[:40], 'seed': s
     })
 
-
 @app.route('/api/download/<filename>')
-def api_download(filename):
-    """Download a generated MIDI file."""
-    filepath = os.path.join(TEMP_DIR, filename)
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'File not found'}), 404
-    return send_file(filepath, as_attachment=True,
-                     download_name=filename,
-                     mimetype='audio/midi')
-
+def dl(filename):
+    p = os.path.join(TDIR, filename)
+    if not os.path.exists(p): return jsonify({'error': 'Not found'}), 404
+    return send_file(p, as_attachment=True, download_name=filename, mimetype='audio/midi')
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

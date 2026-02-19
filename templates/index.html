@@ -1,204 +1,99 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Isai — Procedural MIDI Generator</title>
-    <meta name="description" content="Generate unique MIDI music algorithmically. Choose your scale, mood, and complexity to create original compositions.">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <title>Isai — Markov Chain MIDI Generator</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
-    <div class="app">
-        <!-- Background animated elements -->
-        <div class="bg-orbs">
-            <div class="orb orb-1"></div>
-            <div class="orb orb-2"></div>
-            <div class="orb orb-3"></div>
+    <h1>Isai</h1>
+    <p>Procedural MIDI generator using Markov chain note transitions.</p>
+
+    <h2>Configuration</h2>
+    <div class="controls">
+        <div class="control">
+            <label for="root-select">Root</label>
+            <select id="root-select">
+                {% for note in notes %}
+                <option value="{{ note }}" {% if note=='C' %}selected{% endif %}>{{ note }}</option>
+                {% endfor %}
+            </select>
         </div>
+        <div class="control">
+            <label for="scale-select">Scale</label>
+            <select id="scale-select">
+                {% for scale in scales %}
+                <option value="{{ scale }}">{{ scale.replace('_', ' ') }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
 
-        <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <span class="logo-icon">🎵</span>
-                <h1>Isai</h1>
-                <span class="logo-tagline">Procedural MIDI Generator</span>
-            </div>
-        </header>
+    <div class="piano-strip" id="piano-strip"></div>
 
-        <main class="main">
-            <!-- Left Panel: Controls -->
-            <section class="panel controls-panel" id="controls-panel">
-                <h2 class="panel-title">
-                    <span class="panel-icon">⚙️</span> Configuration
-                </h2>
+    <div class="mood-row" id="mood-grid">
+        {% for mood in moods %}
+        <button class="mood-btn {% if mood == 'happy' %}active{% endif %}" data-mood="{{ mood }}">{{ mood }}</button>
+        {% endfor %}
+    </div>
 
-                <!-- Root Note -->
-                <div class="control-group">
-                    <label class="control-label" for="root-select">Root Note</label>
-                    <div class="select-wrapper">
-                        <select id="root-select" class="select">
-                            {% for note in notes %}
-                            <option value="{{ note }}" {% if note == 'C' %}selected{% endif %}>{{ note }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
+    <div class="controls">
+        <div class="control">
+            <label>Complexity</label>
+            <input type="range" id="complexity-slider" min="1" max="5" value="3" step="1">
+            <span class="val" id="complexity-value">3</span>
+        </div>
+        <div class="control">
+            <label>Tempo</label>
+            <input type="range" id="tempo-slider" min="40" max="240" value="120" step="1">
+            <span class="val" id="tempo-value">120</span>
+        </div>
+        <div class="control">
+            <label>Bars</label>
+            <input type="range" id="bars-slider" min="4" max="64" value="16" step="4">
+            <span class="val" id="bars-value">16</span>
+        </div>
+        <div class="control">
+            <label>Seed</label>
+            <input type="number" id="seed-input" placeholder="random" style="width:80px">
+            <button id="randomize-seed">🎲</button>
+        </div>
+    </div>
 
-                <!-- Scale -->
-                <div class="control-group">
-                    <label class="control-label" for="scale-select">Scale</label>
-                    <div class="select-wrapper">
-                        <select id="scale-select" class="select">
-                            {% for scale in scales %}
-                            <option value="{{ scale }}">{{ scale.replace('_', ' ').title() }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
+    <button id="generate-btn">Generate MIDI</button>
 
-                <!-- Scale Preview -->
-                <div class="control-group">
-                    <div class="piano-strip" id="piano-strip">
-                        <!-- Piano keys rendered by JS -->
-                    </div>
-                </div>
+    <div class="result hidden" id="empty-state">
+        <!-- hidden placeholder -->
+    </div>
 
-                <!-- Mood -->
-                <div class="control-group">
-                    <label class="control-label">Mood</label>
-                    <div class="mood-grid" id="mood-grid">
-                        {% set mood_icons = {
-                            'happy': '☀️',
-                            'sad': '🌧️',
-                            'energetic': '⚡',
-                            'calm': '🌊',
-                            'dark': '🌑',
-                            'epic': '🏔️',
-                            'dreamy': '✨'
-                        } %}
-                        {% for mood in moods %}
-                        <button class="mood-btn {% if mood == 'happy' %}active{% endif %}"
-                                data-mood="{{ mood }}" id="mood-{{ mood }}">
-                            <span class="mood-icon">{{ mood_icons[mood] }}</span>
-                            <span class="mood-name">{{ mood.title() }}</span>
-                        </button>
-                        {% endfor %}
-                    </div>
-                </div>
+    <div class="result hidden" id="result-card">
+        <h2>Result</h2>
+        <div class="meta-tags" id="result-meta"></div>
+        <div class="section-bar" id="section-bars"></div>
+        <div class="stats" id="result-stats"></div>
+        <button id="download-btn">⬇ Download .mid</button>
+    </div>
 
-                <!-- Complexity -->
-                <div class="control-group">
-                    <label class="control-label" for="complexity-slider">
-                        Complexity <span class="value-badge" id="complexity-value">3</span>
-                    </label>
-                    <input type="range" id="complexity-slider" class="slider"
-                           min="1" max="5" value="3" step="1">
-                    <div class="slider-labels">
-                        <span>Simple</span>
-                        <span>Complex</span>
-                    </div>
-                </div>
+    <div class="markov-viz hidden" id="markov-viz">
+        <h2>Markov Chain Visualization</h2>
+        <p style="font-size:0.8rem;color:#666">Transition probability matrix (row = current note, col = next note). Each
+            row sums to 1. Darker = higher probability.</p>
+        <div id="matrix-container"></div>
+        <h2>Transition Trace</h2>
+        <p style="font-size:0.8rem;color:#666">Actual transitions the algorithm made during generation, with their
+            probability at each step:</p>
+        <div class="trace-list" id="trace-list"></div>
+    </div>
 
-                <!-- Tempo -->
-                <div class="control-group">
-                    <label class="control-label" for="tempo-slider">
-                        Tempo <span class="value-badge" id="tempo-value">120</span> BPM
-                    </label>
-                    <input type="range" id="tempo-slider" class="slider"
-                           min="40" max="240" value="120" step="1">
-                    <div class="slider-labels">
-                        <span>40</span>
-                        <span>240</span>
-                    </div>
-                </div>
-
-                <!-- Duration (Bars) -->
-                <div class="control-group">
-                    <label class="control-label" for="bars-slider">
-                        Duration <span class="value-badge" id="bars-value">16</span> bars
-                    </label>
-                    <input type="range" id="bars-slider" class="slider"
-                           min="4" max="64" value="16" step="4">
-                    <div class="slider-labels">
-                        <span>4</span>
-                        <span>64</span>
-                    </div>
-                </div>
-
-                <!-- Seed -->
-                <div class="control-group">
-                    <label class="control-label" for="seed-input">
-                        Seed <span class="seed-hint">(optional)</span>
-                    </label>
-                    <div class="seed-row">
-                        <input type="number" id="seed-input" class="text-input"
-                               placeholder="Random">
-                        <button class="btn-icon" id="randomize-seed" title="Randomize">🎲</button>
-                    </div>
-                </div>
-
-                <!-- Generate Button -->
-                <button class="btn-generate" id="generate-btn">
-                    <span class="btn-text">Generate MIDI</span>
-                    <span class="btn-loader" id="btn-loader"></span>
-                </button>
-            </section>
-
-            <!-- Right Panel: Output -->
-            <section class="panel output-panel" id="output-panel">
-                <h2 class="panel-title">
-                    <span class="panel-icon">🎶</span> Output
-                </h2>
-
-                <!-- Empty state -->
-                <div class="empty-state" id="empty-state">
-                    <div class="empty-icon">🎹</div>
-                    <p>Configure your settings and hit <strong>Generate</strong> to create a unique MIDI composition.</p>
-                </div>
-
-                <!-- Result (hidden initially) -->
-                <div class="result-card hidden" id="result-card">
-                    <div class="result-header">
-                        <h3 id="result-title">Generated Composition</h3>
-                        <button class="btn-download" id="download-btn">
-                            <span>⬇️</span> Download .mid
-                        </button>
-                    </div>
-
-                    <div class="result-meta" id="result-meta">
-                        <!-- Filled by JS -->
-                    </div>
-
-                    <div class="result-sections">
-                        <h4>Song Structure</h4>
-                        <div class="section-bars" id="section-bars">
-                            <!-- Filled by JS -->
-                        </div>
-                    </div>
-
-                    <div class="result-stats" id="result-stats">
-                        <!-- Filled by JS -->
-                    </div>
-                </div>
-
-                <!-- History -->
-                <div class="history" id="history">
-                    <h3 class="history-title">History</h3>
-                    <div class="history-list" id="history-list">
-                        <!-- Filled by JS -->
-                    </div>
-                </div>
-            </section>
-        </main>
-
-        <footer class="footer">
-            <p>Isai — Algorithmic music, no AI. Built with 🎵 and math.</p>
-        </footer>
+    <div class="history">
+        <h2>History</h2>
+        <div id="history-list"></div>
     </div>
 
     <script src="/static/app.js"></script>
 </body>
+
 </html>

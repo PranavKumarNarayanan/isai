@@ -25,15 +25,15 @@ The numbers in each row always add up to 1. To pick the next note, we roll a wei
 
 The interesting part is that the matrix isn't hardcoded — it's constructed at runtime based on the mood you select. Each mood has parameters that reshape the matrix:
 
-- **direction bias**: a "happy" mood biases the matrix toward ascending intervals (bias = 0.55), while "sad" biases toward descending (bias = 0.38)
-- **leap probability**: "epic" allows large interval jumps (0.3), while "calm" keeps things close (0.05)
-- **note density**: controls how many rhythm slots actually get a note vs. a rest
+- **Direction bias**: a "happy" mood biases the matrix toward ascending intervals (bias = 0.55), while "sad" biases toward descending (bias = 0.38)
+- **Leap probability**: "epic" allows large interval jumps (0.3), while "calm" keeps things close (0.05)
+- **Note density**: controls how many rhythm slots actually get a note vs. a rest
 
 So the same scale produces different-sounding melodies depending on mood, because the transition probabilities are different.
 
 ## How it works here.
 
-1. **You configure**: root note (C-B), scale (major, minor, dorian, blues, etc.), mood (happy, sad, dark, epic, etc.), complexity (1-5), tempo, duration in bars
+1. **User Configuration**: root note (C-B), scale (major, minor, dorian, blues, etc.), mood (happy, sad, dark, epic, etc.), complexity (1-5), tempo, duration in bars
 
 2. **Matrix construction** (`engine/melody.py → _build_matrix`):
    - creates an N×N matrix where N = number of notes in the scale across the selected octave range
@@ -154,7 +154,7 @@ available moods: `happy`, `sad`, `energetic`, `calm`, `dark`, `epic`, `dreamy`
 python app.py
 ```
 
-open `http://localhost:5000` in your browser. configure settings, hit Generate. the page will show your MIDI file info, a download button, and a visualization of the Markov chain matrix + the transition trace from that specific generation.
+Ppen `http://localhost:5000` in your browser. Configure settings, hit Generate. the page will show your MIDI file info, a download button, and a visualization of the Markov chain matrix + the transition trace from that specific generation.
 
 ## The visualization
 
@@ -166,20 +166,18 @@ after generating, the web ui shows two things:
 
 ## Dependencies
 
-just two:
-
 - **mido** — reads and writes standard MIDI files
 - **flask** — serves the web ui
 
-both are in `requirements.txt`. no heavyweight dependencies, no ML frameworks.
+both are in `requirements.txt`.
 
 ## Seed reproducibility
 
-if you pass `--seed 12345` (or type a seed in the web ui), you'll get the exact same output every time. same notes, same rhythms, same arrangement. useful for iterating on a specific generation you liked.
+if you pass `--seed 12345` (or type a seed in the Web UI), you'll get the exact same output every time. This is particularly useful in iterating over the same generation settings.
 
 ## Output format
 
-standard MIDI type 1 file with 3 tracks:
+Standard MIDI type 1 file with 3 tracks:
 
 | track   | channel | GM program      |
 |---------|---------|-----------------|

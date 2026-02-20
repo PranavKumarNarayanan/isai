@@ -188,4 +188,4 @@ Standard MIDI type 1 file with 3 tracks:
 480 ticks per beat, 4/4 time. section markers are embedded as MIDI marker events.
 
 ## WebUi Demo
-![WebUI Demo](assets\webui.gif)
+![WebUI Demo](./assets/webui.gif)
